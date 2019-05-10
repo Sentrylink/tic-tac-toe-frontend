@@ -222,8 +222,8 @@ const TicTacToeAPI = function(opts) {
 
             if (broadcast) {
                 let res = await axios.post(`${this.rest}/txs`, JSON.stringify({
-                    tx: tx,
-                    mode: 'block'    
+                    tx: JSON.stringify(tx),
+                    mode: 'block'
                 }))
 
                 return res.data
