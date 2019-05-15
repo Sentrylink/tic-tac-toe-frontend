@@ -221,10 +221,10 @@ const TicTacToeAPI = function(opts) {
             tx.value.signatures.push(await signTx(privateKey, tx))
 
             if (broadcast) {
-                let res = await axios.post(`${this.rest}/txs`, JSON.stringify({
-                    tx: JSON.stringify(tx),
-                    mode: 'block'
-                }))
+                let res = await axios.post(`${this.rest}/txs`, {
+                    tx: tx.value,
+                    return: 'block'
+                })
 
                 return res.data
             } else {
