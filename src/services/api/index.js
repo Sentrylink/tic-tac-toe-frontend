@@ -165,7 +165,7 @@ const TicTacToeAPI = function(opts) {
                     from: this.util.getAddressByPrivateKey(privateKey)
                 },
                 player: this.util.getAddressByPrivateKey(privateKey),
-                field: field
+                field: String(field)
             }))
 
             return result.data

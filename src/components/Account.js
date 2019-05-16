@@ -34,13 +34,11 @@ class Account extends Component {
         delay(ms).then(async () => {
             setLoader(this, 'refresh', true)
 
-            if (this.state.game) {
+            if (this.state.game >= 0) {
                 let state = await API.main.gameStatus(this.state.game)
 
-                console.log(state)
-
                 this.setState({
-                    gameState: state
+                    gameState: state.value
                 })
             }
             
@@ -73,18 +71,18 @@ class Account extends Component {
 
         if (state) {
             this.setState({
-                gameState: state,
-                game: this.state.gameId
+                gameState: state.value,
+                game: Number(this.state.gameId)
             })
 
             this.refresh()
         }
     }
 
-    async playMove () {
+    async playMove (index) {
         setLoader(this, 'start', true)
 
-        let data = await API.main.playMove(this.props.privateKey, this.state.game, this.state.field)
+        let data = await API.main.playMove(this.props.privateKey, this.state.game, index)
 
         if (data) {
             this.refresh()
@@ -107,15 +105,24 @@ class Account extends Component {
         })
 
         API.util.signTransaction(this.props.privateKey, this.state.tx, true).then(data => {
-            console.log(data)
-            if (!data.check_tx.code && !data.deliver_tx.code) {
+            if (data.logs && data.logs[0] && data.logs[0].success) {
                 this.refresh()
 
                 NotificationManager.success('Transaction broadcasted successfully.', 'Transaction')
 
-                this.setState({
-                    tx: null
-                })
+                if (!this.state.game && this.state.game !== 0) {
+                    let gameState = JSON.parse(Buffer.from(data.data, 'base64').toString('utf-8'))
+
+                    this.setState({
+                        tx: null,
+                        gameState: gameState,
+                        game: Number(gameState.id)
+                    })
+                } else {
+                    this.setState({
+                        tx: null
+                    })
+                }
             } else {
                 NotificationManager.error((data.deliver_tx.log && data.deliver_tx.log.replace(/error(:|)\s+/ig, '')) || data.check_tx.log.replace(/error(:|)\s+/ig, ''), 'Error!')
             }
@@ -126,6 +133,10 @@ class Account extends Component {
 
             setLoader(this, 'relay', false)
         })
+    }
+
+    getField (index) {
+        return this.state.gameState.fields[index]
     }
 
     onCheck (event) {
@@ -144,11 +155,7 @@ class Account extends Component {
         this.refresh()
 
         API.events.onTx(data => {
-            let tx = API.util.decodeTx(data.TxResult.tx)
-
-            const address = this.state.address
-
-            // TODO: Add transactions            
+            this.refresh(1000)
         })
     }
 
@@ -176,12 +183,14 @@ class Account extends Component {
                         </div>
                     </div>
 
-                    { this.state.game ? 
+                    { this.state.game >= 0 ? 
                     (<React.Fragment>
-                        <h2>Game</h2>
+                        <h2>Game #{this.state.game}</h2>
                         
                         <table>
-                            {[1,2,3].map(i => <tr>{[1,2,3].map(j => <td style={{width: "50px"}} onClick={() => this.setField(i)}></td>)}</tr>)}
+                            <tbody>
+                                {[0,1,2].map(i => <tr key={i}>{[0,1,2].map(j => <td key={i * 3 + j} style={{width: "50px",height: "50px",textAlign: "center",verticalAlign: "middle"}} onClick={() => this.playMove(i * 3 + j)}>{this.getField(i * 3 + j)}</td>)}</tr>)}
+                            </tbody>
                         </table>
                     </React.Fragment>) :
                     (<React.Fragment>
@@ -192,7 +201,6 @@ class Account extends Component {
                             onChange={ (e) => this.onChange(e) }
                             type="text"
                             placeholder="Address"
-                            value={this.state.opponent}
                             name="opponent"
                             className="form-control"
                         />
@@ -206,11 +214,10 @@ class Account extends Component {
                             onChange={ (e) => this.onChange(e) }
                             type="text"
                             placeholder="Game ID"
-                            value={this.state.gameId}
                             name="gameId"
                             className="form-control"
                         />
-                        <span className="btn btn-primary generate" onClick={() => this.startGame()}>Load existing game</span>
+                        <span className="btn btn-primary generate" onClick={() => this.loadGame()}>Load existing game</span>
                     </fieldset>
                     </React.Fragment>)}
                     
