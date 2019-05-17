@@ -17,8 +17,8 @@ const getAddress = pubkey => {
     return bech32.encode(prefix, bech32.toWords(bytes))
 }
 
-const signTx = async (privateKey, tx) => {
-    let state = (await axios.get(`http://localhost:1317/auth/accounts/${getAddress(secp256k1.keyFromPrivate(privateKey, 'hex').getPublic(true, 'hex'))}`)).data
+const signTx = async (rest, privateKey, tx) => {
+    let state = (await axios.get(`${rest}/auth/accounts/${getAddress(secp256k1.keyFromPrivate(privateKey, 'hex').getPublic(true, 'hex'))}`)).data
 
     if (state) {
         state = JSON.parse(state)
@@ -148,7 +148,7 @@ const TicTacToeAPI = function(opts) {
                     chain_id: 'ttt',
                     from: this.util.getAddressByPrivateKey(privateKey)
                 },
-                owner: this.util.getAddressByPrivateKey(privateKey),
+                inviter: this.util.getAddressByPrivateKey(privateKey),
                 amount: {
                     denom: 'abc', 
                     amount: '0'
@@ -218,7 +218,7 @@ const TicTacToeAPI = function(opts) {
 
             tx.value.signatures = tx.value.signatures || []
 
-            tx.value.signatures.push(await signTx(privateKey, tx))
+            tx.value.signatures.push(await signTx(this.rest, privateKey, tx))
 
             if (broadcast) {
                 let res = await axios.post(`${this.rest}/txs`, {
