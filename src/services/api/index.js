@@ -17,8 +17,29 @@ const getAddress = pubkey => {
     return bech32.encode(prefix, bech32.toWords(bytes))
 }
 
+const getMultisigAddress = (threshold, pubkeys) => {
+    let json = JSON.stringify({
+        type: 'tendermint/PubKeyMultisigThreshold',
+        value: {
+            threshold: threshold,
+            pubkeys: pubkeys.map(i => ({
+                type: 'tendermint/PubKeySecp256k1',
+                value: Buffer.from(i, 'hex').toString('base64'),
+            })),
+        },
+    })
+
+    let bytes = Buffer.from(hash('sha256', json)).slice(0, 20)
+
+    return bech32.encode(prefix, bech32.toWords(bytes))
+}
+
 const signTx = async (rest, privateKey, tx) => {
-    let state = (await axios.get(`${rest}/auth/accounts/${getAddress(secp256k1.keyFromPrivate(privateKey, 'hex').getPublic(true, 'hex'))}`)).data
+    let state = (await axios.get(
+        `${rest}/auth/accounts/${getAddress(
+            secp256k1.keyFromPrivate(privateKey, 'hex').getPublic(true, 'hex')
+        )}`
+    )).data
 
     if (state) {
         state = JSON.parse(state)
@@ -143,38 +164,44 @@ const TicTacToeAPI = function(opts) {
 
     this.main = {
         startGame: async (privateKey, opponent) => {
-            let result = await axios.post(`${this.rest}/tictactoe/game`, JSON.stringify({
-                base_req: {
-                    chain_id: 'ttt',
-                    from: this.util.getAddressByPrivateKey(privateKey)
-                },
-                inviter: this.util.getAddressByPrivateKey(privateKey),
-                amount: {
-                    denom: 'abc', 
-                    amount: '0'
-                },
-                opponent: opponent
-            }))
+            let result = await axios.post(
+                `${this.rest}/tictactoe/game`,
+                JSON.stringify({
+                    base_req: {
+                        chain_id: 'ttt',
+                        from: this.util.getAddressByPrivateKey(privateKey),
+                    },
+                    inviter: this.util.getAddressByPrivateKey(privateKey),
+                    amount: {
+                        denom: 'abc',
+                        amount: '0',
+                    },
+                    opponent: opponent,
+                })
+            )
 
             return result.data
         },
         playMove: async (privateKey, game, field) => {
-            let result = await axios.post(`${this.rest}/tictactoe/game/${game}/play`, JSON.stringify({
-                base_req: {
-                    chain_id: 'ttt',
-                    from: this.util.getAddressByPrivateKey(privateKey)
-                },
-                player: this.util.getAddressByPrivateKey(privateKey),
-                field: String(field)
-            }))
+            let result = await axios.post(
+                `${this.rest}/tictactoe/game/${game}/play`,
+                JSON.stringify({
+                    base_req: {
+                        chain_id: 'ttt',
+                        from: this.util.getAddressByPrivateKey(privateKey),
+                    },
+                    player: this.util.getAddressByPrivateKey(privateKey),
+                    field: String(field),
+                })
+            )
 
             return result.data
         },
-        gameStatus: async (game) => {
+        gameStatus: async game => {
             let result = await axios.get(`${this.rest}/tictactoe/game/${game}`)
 
             return result.data
-        }
+        },
     }
 
     this.util = {
@@ -188,7 +215,9 @@ const TicTacToeAPI = function(opts) {
             }
 
             return getAddress(
-                secp256k1.keyFromPrivate(privateKey, 'hex').getPublic(true, 'hex')
+                secp256k1
+                    .keyFromPrivate(privateKey, 'hex')
+                    .getPublic(true, 'hex')
             )
         },
         getAddressByPublicKey: publicKey => {
@@ -207,6 +236,9 @@ const TicTacToeAPI = function(opts) {
                 address: getAddress(key.getPublic(true, 'hex')),
             }
         },
+        getMultisigAddress: (threshold, pubkeys) => {
+            return getMultisigAddress(threshold, pubkeys)
+        },
         signTransaction: async (privateKey, tx, broadcast = true) => {
             if (!privateKey || typeof privateKey !== 'string') {
                 throw Error('Invalid private key.')
@@ -223,14 +255,139 @@ const TicTacToeAPI = function(opts) {
             if (broadcast) {
                 let res = await axios.post(`${this.rest}/txs`, {
                     tx: tx.value,
-                    return: 'block'
+                    return: 'block',
                 })
 
                 return res.data
             } else {
                 return JSON.stringify(tx, null, 4)
             }
-        }
+        },
+        signMultisigTransaction: async (privateKey, address, tx) => {
+            let state = (await axios.get(
+                `${this.rest}/auth/accounts/${address}`
+            )).data
+
+            if (state) {
+                state = JSON.parse(state)
+            } else {
+                state = {
+                    value: {},
+                }
+            }
+
+            let jsonHash = hash(
+                'sha256',
+                Buffer.from(
+                    JSON.stringify({
+                        account_number: state.value.account_number || '0',
+                        chain_id: chainId,
+                        fee: sortJson(tx.value.fee),
+                        memo: tx.value.memo,
+                        msgs: sortJson(tx.value.msg[0].value),
+                        sequence: state.value.sequence || '0',
+                    }),
+                    'utf8'
+                )
+            )
+
+            return JSON.stringify({
+                pubKey: secp256k1
+                    .keyFromPrivate(privateKey, 'hex')
+                    .getPublic(true, 'hex'),
+                signature: convertSignature(
+                    secp256k1.sign(jsonHash, privateKey, 'hex', {
+                        canonical: true,
+                    })
+                ).toString('base64'),
+            })
+        },
+        broadcastMultisigTransaction: async (
+            sigs,
+            threshold,
+            pubKeys,
+            tx,
+            broadcast = true
+        ) => {
+            let signature = {
+                BitArray: '_'.repeat(pubKeys.length).split(''),
+                Sigs: [],
+            }
+
+            const numTrueBits = index => {
+                let numTrueValues = 0
+
+                for (let i = 0; i < index; i++) {
+                    if (signature.BitArray[i] === 'x') {
+                        numTrueValues++
+                    }
+                }
+
+                return numTrueValues
+            }
+
+            const addSignature = (sig, index) => {
+                signature.BitArray[index] = 'x'
+
+                let newIndex = numTrueBits(index)
+
+                if (newIndex === signature.Sigs.length) {
+                    signature.Sigs.push(sig)
+
+                    return
+                }
+
+                let len = signature.Sigs.length
+
+                for (let i = newIndex; i < len; i++) {
+                    signature.Sigs[i + 1] = signature.Sigs[i]
+                }
+
+                signature.Sigs[newIndex] = sig
+            }
+
+            let avPubKeys = sigs.map(i => i.pubKey)
+
+            pubKeys.forEach((i, ind) => {
+                let index = avPubKeys.indexOf(i)
+
+                if (index !== -1) {
+                    addSignature(sigs[index].signature, ind)
+                }
+            })
+
+            signature.BitArray = signature.BitArray.join('')
+
+            let finSignature = {
+                pub_key: {
+                    type: 'tendermint/PubKeyMultisigThreshold',
+                    value: {
+                        threshold: threshold,
+                        pubkeys: pubKeys.map(i => ({
+                            type: 'tendermint/PubKeySecp256k1',
+                            value: Buffer.from(i, 'hex').toString('base64'),
+                        })),
+                    },
+                },
+                signature: Buffer.from(
+                    JSON.stringify(signature),
+                    'utf8'
+                ).toString('base64'),
+            }
+
+            tx.value.signatures = [finSignature]
+
+            if (broadcast) {
+                let res = await axios.post(`${this.rest}/txs`, {
+                    tx: tx.value,
+                    return: 'block',
+                })
+
+                return res.data
+            } else {
+                return JSON.stringify(tx, null, 4)
+            }
+        },
     }
 }
 

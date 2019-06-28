@@ -49,8 +49,4 @@ const sortJson = obj => {
     }
 }
 
-export {
-    hash,
-    convertSignature,
-    sortJson,
-}
+export { hash, convertSignature, sortJson }
